@@ -61,7 +61,7 @@ create or approve pull requests` until it is on), so enable both, org first:
 ```sh
 gh api -X PUT orgs/eralabs-ai/actions/permissions/workflow \
   -F default_workflow_permissions=read -F can_approve_pull_request_reviews=true
-gh api -X PUT repos/eralabs-ai/ora-cli/actions/permissions/workflow \
+gh api -X PUT repos/eralabs-ai/ax/actions/permissions/workflow \
   -F default_workflow_permissions=read -F can_approve_pull_request_reviews=true
 ```
 
@@ -76,7 +76,7 @@ pushed, and the GitHub Release never gets created.
 Publishing is tokenless: npm verifies the workflow's identity through GitHub's
 OIDC provider. The trusted publisher is configured on npmjs.com → `ax` →
 **Settings → Trusted Publisher**: GitHub Actions, org `eralabs-ai`, repository
-`ora-cli`, workflow `release.yml`, no environment, `npm publish` allowed. The
+`ax`, workflow `release.yml`, no environment, `npm publish` allowed. The
 workflow's `id-token: write` permission plus npm ≥ 11.5.1 (the job upgrades
 npm explicitly — Node 22 bundles npm 10, which silently skips the OIDC
 exchange) are the only other requirements.
