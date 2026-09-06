@@ -212,9 +212,21 @@ jobs:
           git show --stat --oneline HEAD | tail -n +2
           git push origin "$BRANCH"
 
+          # Opening a PR with the built-in token needs the repo setting "Allow
+          # GitHub Actions to create and approve pull requests" (Settings →
+          # Actions → General); without it this call is refused outright. And a
+          # PR opened by that token never fires pull_request events, so the
+          # required checks (ci, Conventional commit title) will not run on it
+          # until a human closes and reopens it — the reopen fires them as that
+          # human. The body tells the merger exactly that.
           gh pr create --base main --head "$BRANCH" \
             --title "chore(release): $TAG" \
-            --body "Records the \`$TAG\` release already published to npm and tagged at \`$MAIN_SHA\`. Merging updates \`package.json\` on main — bump only, safe to squash-merge."
+            --body "$(cat <<EOF
+          Records the \`$TAG\` release already published to npm and tagged at \`$MAIN_SHA\`. Merging updates \`package.json\` on main — bump only, safe to squash-merge.
+
+          **Checks will not start on their own.** This PR was opened by the release workflow with the built-in Actions token, and PRs opened that way never trigger \`pull_request\` workflows. **Close and reopen this PR** to run the required checks, then merge.
+          EOF
+          )"
 
       - name: Create GitHub Release
         if: ${{ !inputs.dry_run }}

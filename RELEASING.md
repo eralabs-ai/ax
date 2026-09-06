@@ -29,8 +29,12 @@ the `package.json` bump on `main`.
 **Every release leaves one PR to merge.** The workflow deliberately never pushes
 to `main` — see [Why the bump comes as a PR](#why-the-bump-comes-as-a-pr). npm,
 the tag, and the GitHub Release all land automatically in the run; only the
-one-line `package.json` bump waits on that PR. Merge it (squash) to finish the
-release. The version on npm is live regardless of when the PR merges.
+one-line `package.json` bump waits on that PR. **Close and reopen the PR, then
+merge it (squash)** to finish the release. The close/reopen is not optional: the
+PR is opened with the built-in Actions token, and PRs opened that way never
+trigger `pull_request` workflows, so the required checks stay "expected" until a
+human reopens it — the reopen fires them as that human. The version on npm is
+live regardless of when the PR merges.
 
 Note the tag points at the commit the artifact was **built from** (main's HEAD at
 dispatch), not at the bump commit — so `vX.Y.Z` and its `package.json` bump are
@@ -41,6 +45,31 @@ Rehearse anything uncertain with `dry_run` checked: it does every step including
 `npm publish --dry-run`, but publishes nothing, commits nothing, pushes nothing.
 
 ## One-time setup
+
+### Let the workflow open the bump PR
+
+The release job opens the `chore(release)` PR with the built-in `GITHUB_TOKEN`.
+GitHub refuses that by default ("GitHub Actions is not permitted to create or
+approve pull requests") — the `pull-requests: write` grant in the workflow is
+not enough on its own. Enable it once, repo-wide:
+
+**Settings → Actions → General → Workflow permissions → Allow GitHub Actions to
+create and approve pull requests**. The org-level setting gates the repo one
+(the repo call returns `409 The organization does not allow GitHub Actions to
+create or approve pull requests` until it is on), so enable both, org first:
+
+```sh
+gh api -X PUT orgs/eralabs-ai/actions/permissions/workflow \
+  -F default_workflow_permissions=read -F can_approve_pull_request_reviews=true
+gh api -X PUT repos/eralabs-ai/ora-cli/actions/permissions/workflow \
+  -F default_workflow_permissions=read -F can_approve_pull_request_reviews=true
+```
+
+Turning it on at the org only makes it available to repos; it does not switch
+it on for any of them, which is why the second call is still needed.
+
+Without this, every release fails at the PR step after the tag is already
+pushed, and the GitHub Release never gets created.
 
 ### OIDC Trusted Publishing
 
@@ -150,6 +179,11 @@ The workflow sidesteps it entirely: **tags** carry no protection rule, so the ta
 and GitHub Release push straight through; the `package.json` bump lands through a
 normal PR that runs the required checks and a human merges. Nothing is ever pushed
 to `main` directly.
+
+One wrinkle: PRs opened with the built-in Actions token do not trigger
+`pull_request` workflows (GitHub's guard against recursive runs), so the bump PR
+arrives with its required checks stuck at "expected". Closing and reopening it as
+a human fires the checks under that human's identity. The PR body says so.
 
 If you would rather keep everything atomic in one run (tag semantics unchanged,
 no leftover PR), the alternative is to give the release job a **bypass** on the
