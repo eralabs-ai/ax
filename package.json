@@ -51,7 +51,10 @@
 		"access": "public"
 	},
 	"pnpm": {
-		"onlyBuiltDependencies": ["@biomejs/biome", "esbuild"]
+		"onlyBuiltDependencies": ["@biomejs/biome", "esbuild"],
+		"overrides": {
+			"undici@<6.28.0": "^6.28.0"
+		}
 	},
 	"license": "MIT",
 	"author": {
