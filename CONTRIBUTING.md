@@ -40,5 +40,5 @@ edit it by hand. If the scheduled contract-drift job is red, run
 
 ## Releases
 
-Maintainers release via the manual `Release` workflow (see `RELEASING.md`).
+Maintainers release by merging the release-please PR (see `RELEASING.md`).
 Contributors never need to bump versions or publish.

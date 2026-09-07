@@ -1,19 +1,27 @@
 # Releasing `ax`
 
-Releases are manual, deliberate, and run entirely in CI. Nobody publishes from a
-laptop.
+Releases are automatic and run entirely in CI. Nobody publishes from a laptop,
+and nobody edits `package.json`'s version by hand.
 
-## Cutting a release
+## How a release happens
 
-1. Land your changes on `main` and let [CI](.github/workflows/ci.yml) go green.
-2. **Actions → Release → Run workflow**, from the `main` branch.
-3. Pick a `version_bump`:
-   - `patch` — bug fixes
-   - `minor` — new commands or flags, backwards compatible
-   - `major` — breaking changes to commands, flags, or output
-   - `none` — publish `package.json`'s current version as-is
-4. Leave `dry_run` unchecked. Run it.
-5. If the release changes the command/flag surface the agent-ready-website
+1. Land changes on `main` through normal PRs with conventional titles
+   (`feat:`, `fix:`, `chore:`, …). The `Conventional commit title` check
+   enforces this; the title becomes the squash commit on `main`.
+2. On every push to `main`, [release-please](https://github.com/googleapis/release-please)
+   opens or updates **one** PR titled `chore(main): release X.Y.Z`. It bumps
+   `package.json`, writes the `CHANGELOG.md` entry from the commit titles, and
+   picks the version from the commit types:
+   - `fix:` → patch
+   - `feat:` → minor (we are pre-1.0, so `bump-minor-pre-major` keeps
+     breaking changes at minor too)
+   - `chore:`, `docs:`, `ci:`, `test:`, `refactor:` → no release on their own
+3. **Merging the release PR is the release.** The push that merges it makes
+   release-please tag the commit `vX.Y.Z` and create the GitHub Release, then
+   the `publish` job in [release.yml](.github/workflows/release.yml) lints,
+   typechecks, tests, builds, smoke-tests the bundled binary, verifies the
+   tarball, and runs `npm publish --provenance` via OIDC Trusted Publishing.
+4. If the release changes the command/flag surface the agent-ready-website
    skill invokes (today: `audit` and the flags its playbook shows), bump the
    pinned `CLI_RANGE` in the main repo's
    `src/lib/mcp/skills-content/agent-ready-website.ts` in the same breath and
@@ -21,55 +29,36 @@ laptop.
    resolve only the release line the playbook documents, so a range left
    behind quietly routes agents to the API fallback instead of the new CLI.
 
-The workflow lints, typechecks, tests, bumps, builds, smoke-tests the bundled
-binary, publishes to npm with provenance, tags the built commit, opens a GitHub
-Release with generated notes, and opens a `chore(release): vX.Y.Z` PR that lands
-the `package.json` bump on `main`.
+Nothing is left over after a release. The tag, the GitHub Release, the
+changelog and the `package.json` bump all live on `main` before npm is touched,
+and `publish` never commits anything, so there is no loop and no trailing PR.
 
-**Every release leaves one PR to merge.** The workflow deliberately never pushes
-to `main` — see [Why the bump comes as a PR](#why-the-bump-comes-as-a-pr). npm,
-the tag, and the GitHub Release all land automatically in the run; only the
-one-line `package.json` bump waits on that PR. **Close and reopen the PR, then
-merge it (squash)** to finish the release. The close/reopen is not optional: the
-PR is opened with the built-in Actions token, and PRs opened that way never
-trigger `pull_request` workflows, so the required checks stay "expected" until a
-human reopens it — the reopen fires them as that human. The version on npm is
-live regardless of when the PR merges.
+To ship a version release-please would not pick on its own (e.g. `1.0.0`), put
+`Release-As: 1.0.0` in the body of any commit that lands on `main`, or add a
+`release-as` field to `release-please-config.json` for one release and remove it
+after.
 
-Note the tag points at the commit the artifact was **built from** (main's HEAD at
-dispatch), not at the bump commit — so `vX.Y.Z` and its `package.json` bump are
-one commit apart. This is intentional: the repo squash-merges, which rewrites the
-bump commit's SHA, so tagging it would orphan the tag.
-
-Rehearse anything uncertain with `dry_run` checked: it does every step including
-`npm publish --dry-run`, but publishes nothing, commits nothing, pushes nothing.
+Rehearse the publish half with **Actions → Release → Run workflow** and
+`dry_run` checked. It runs the full gate against current `main` and ends in
+`npm publish --dry-run`; nothing is published, tagged or committed.
 
 ## One-time setup
 
-### Let the workflow open the bump PR
+### A token for the release PR
 
-The release job opens the `chore(release)` PR with the built-in `GITHUB_TOKEN`.
-GitHub refuses that by default ("GitHub Actions is not permitted to create or
-approve pull requests") — the `pull-requests: write` grant in the workflow is
-not enough on its own. Enable it once, repo-wide:
+PRs opened with the built-in `GITHUB_TOKEN` never trigger `pull_request`
+workflows (GitHub's guard against recursive runs). Without a real token the
+release PR arrives with its required checks stuck at "expected", and someone
+has to close and reopen it before it can merge.
 
-**Settings → Actions → General → Workflow permissions → Allow GitHub Actions to
-create and approve pull requests**. The org-level setting gates the repo one
-(the repo call returns `409 The organization does not allow GitHub Actions to
-create or approve pull requests` until it is on), so enable both, org first:
+Create a **fine-grained personal access token** (a maintainer's, or a machine
+user's) scoped to this repository with `Contents: Read and write` and
+`Pull requests: Read and write`, and store it as the repo secret
+`RELEASE_PLEASE_TOKEN`. The workflow falls back to `GITHUB_TOKEN` when the
+secret is absent, so nothing breaks, but the close/reopen dance returns.
 
-```sh
-gh api -X PUT orgs/ora/actions/permissions/workflow \
-  -F default_workflow_permissions=read -F can_approve_pull_request_reviews=true
-gh api -X PUT repos/ora/ax/actions/permissions/workflow \
-  -F default_workflow_permissions=read -F can_approve_pull_request_reviews=true
-```
-
-Turning it on at the org only makes it available to repos; it does not switch
-it on for any of them, which is why the second call is still needed.
-
-Without this, every release fails at the PR step after the tag is already
-pushed, and the GitHub Release never gets created.
+If the release PR should merge on its own once green, enable auto-merge on it
+once (**Settings → General → Allow auto-merge** is already on for this repo).
 
 ### OIDC Trusted Publishing
 
@@ -77,13 +66,13 @@ Publishing is tokenless: npm verifies the workflow's identity through GitHub's
 OIDC provider. The trusted publisher is configured on npmjs.com → `ax` →
 **Settings → Trusted Publisher**: GitHub Actions, org `ora`, repository
 `ax`, workflow `release.yml`, no environment, `npm publish` allowed. The
-workflow's `id-token: write` permission plus npm ≥ 11.5.1 (the job upgrades
-npm explicitly — Node 22 bundles npm 10, which silently skips the OIDC
-exchange) are the only other requirements.
+`publish` job's `id-token: write` permission plus npm ≥ 11.5.1 (the job
+upgrades npm explicitly — Node 22 bundles npm 10, which silently skips the
+OIDC exchange) are the only other requirements.
 
-If you ever add an `environment:` to the release job (see hardening below),
-update the trusted publisher's environment name to match in the same breath —
-they must agree or publishes are rejected.
+The workflow **filename** is part of that binding. Renaming `release.yml`
+rejects every publish until npmjs.com is updated to match. Same if you ever add
+an `environment:` to the `publish` job (see hardening below).
 
 If tokenless publishing is ever broken and a release can't wait, the fallback
 is a **granular access token** with read+write on the `ax` **package** — `ax`
@@ -97,8 +86,7 @@ Prefer fixing OIDC.
 npm. The package's owners are the `ora-ai` org maintainers, and the
 `ora-ai:developers` team holds a read-write grant
 (`npm access grant read-write ora-ai:developers ax`), so org members publish to
-it exactly as they do to `@ora-ai/*` packages. The token's account needs that
-access.
+it exactly as they do to `@ora-ai/*` packages.
 
 ## The rename from `@ora-ai/ax`
 
@@ -114,86 +102,33 @@ consequences:
 
 ## When something goes wrong
 
-The workflow publishes to npm **before** it tags or opens the bump PR, on
-purpose: npm versions are immutable and effectively permanent, while a tag and a
-branch cost nothing to throw away. That shapes recovery:
+**The release PR is not opening.** release-please only proposes a release when
+at least one `feat:` or `fix:` commit landed since the last tag. Check the
+`Release PR / tag` job log on the latest `main` push.
 
-**Failed before or during publish** — nothing reached npm and nothing was tagged.
-Fix the cause and re-run. The bump lived only in the runner's working copy.
+**The release PR merged but publish failed.** The tag and GitHub Release exist;
+npm does not have the version yet. Fix the cause, then **Actions → Release →
+Run workflow** with `dry_run` unchecked. The `publish` job reads the version
+from `main`, confirms the tag exists, sees the version is not on npm, and
+publishes. If it *is* already on npm the job logs a notice and exits green:
+re-running is always safe.
 
-**Published, but tagging or the PR step failed** — npm has the release; the tag,
-the GitHub Release, or the bump PR is missing. Nothing here is destructive to
-redo, and none of it touches `main` directly. Finish by hand — do only the parts
-that are actually missing (check `git ls-remote --tags origin`, `gh release
-list`, and `gh pr list`):
+**Publish succeeded but the workflow reported failure.** Re-run it; the
+preflight finds the version on npm and skips. Nothing to fix by hand.
 
-```sh
-V=<the-published-version>   # e.g. 0.7.2
+**Wrong version published.** You cannot reuse or overwrite a version. Land a
+`fix:` and let the next release PR ship the correction forward. `npm deprecate`
+the bad one with a message pointing at the replacement.
 
-# 1. Tag the commit the artifact was built from (main's HEAD at release time —
-#    usually current main if it hasn't moved) and the GitHub Release.
-git fetch origin
-git tag -a "v$V" -m "Release v$V" origin/main   # pick the real build SHA if main moved
-git push origin "v$V"
-gh release create "v$V" --title "v$V" --generate-notes --verify-tag
-
-# 2. Land the package.json bump via a PR — a direct push to protected main is
-#    rejected by construction (that is the deadlock this flow exists to avoid).
-git checkout -b "chore/release-v$V" origin/main
-npm version "$V" --no-git-tag-version
-npx biome check --write package.json   # npm version reformats it; Lint fails otherwise
-git commit -am "chore(release): v$V"
-git push -u origin "chore/release-v$V"
-gh pr create --title "chore(release): v$V" --body "Records the v$V release already live on npm."
-```
-
-Do **not** re-run the Release workflow to fix a stuck release — the preflight
-check will correctly refuse, because that version is already on npm (`403 You
-cannot publish over the previously published versions`).
-
-**Wrong version published** — you cannot reuse or overwrite a version. Publish
-the fix forward under a new version. `npm deprecate` the bad one with a message
-pointing at the replacement.
-
-## After the first tokenless release
-
-Once the first OIDC-published release lands cleanly:
-
-1. Delete the `NPM_TOKEN` repo secret and revoke the token on npmjs.com, if
-   either still exists.
-2. On npmjs.com → `ax` → **Settings → Publishing access**, switch to *Require
-   two-factor authentication and disallow bypass 2fa tokens*. Only do this
-   after OIDC is proven — it kills token-based publishing, fallback included.
-
-## Why the bump comes as a PR
-
-`main` is protected: two status checks are required (`ci` and `Conventional
-commit title`), and one of them — `Conventional commit title` — only ever runs on
-`pull_request`. A commit pushed straight to `main` therefore can **never** satisfy
-the ruleset: the required checks run only after the ref updates, which the
-protection won't allow until they pass. So a direct push from the release job is
-rejected by construction and the release deadlocks after the (immutable) npm
-publish. This bit `v0.7.0`, `v0.7.1`, and `v0.7.2`, each reconciled by hand.
-
-The workflow sidesteps it entirely: **tags** carry no protection rule, so the tag
-and GitHub Release push straight through; the `package.json` bump lands through a
-normal PR that runs the required checks and a human merges. Nothing is ever pushed
-to `main` directly.
-
-One wrinkle: PRs opened with the built-in Actions token do not trigger
-`pull_request` workflows (GitHub's guard against recursive runs), so the bump PR
-arrives with its required checks stuck at "expected". Closing and reopening it as
-a human fires the checks under that human's identity. The PR body says so.
-
-If you would rather keep everything atomic in one run (tag semantics unchanged,
-no leftover PR), the alternative is to give the release job a **bypass** on the
-branch rule — add a bypass actor for GitHub Actions in the ruleset, or push with a
-GitHub App / PAT that can bypass required checks. That costs a permanent hole in
-the branch protection plus a secret to manage; the PR flow above needs neither.
+**The changelog or version in the release PR is wrong.** Do not edit the PR
+branch; release-please force-pushes it. Fix the cause on `main` (a mistyped
+commit title, a missing `Release-As:`) and the PR updates itself on the next
+push.
 
 ## Optional hardening
 
 Add a protected [environment](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)
-named `npm` with required reviewers, and set `environment: npm` on the `release`
-job. Publishing then needs a second person to approve the run. Worth doing once
-more than one maintainer can dispatch releases.
+named `npm` with required reviewers, and set `environment: npm` on the
+`publish` job. Publishing then needs a second person to approve the run. Worth
+doing once more than one maintainer can merge release PRs. Update the trusted
+publisher's environment name on npmjs.com in the same change.
