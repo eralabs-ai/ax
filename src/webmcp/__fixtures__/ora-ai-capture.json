@@ -21,7 +21,9 @@
 								"description": "Domain or URL to scan, e.g. stripe.com"
 							}
 						},
-						"required": ["url"],
+						"required": [
+							"url"
+						],
 						"additionalProperties": false
 					},
 					"annotations": {},
@@ -42,7 +44,9 @@
 								"description": "Apex domain, e.g. stripe.com"
 							}
 						},
-						"required": ["domain"],
+						"required": [
+							"domain"
+						],
 						"additionalProperties": false
 					},
 					"annotations": {
@@ -90,7 +94,9 @@
 					"marker": "document.modelContext",
 					"deprecatedAliasOnly": false
 				},
-				"polyfillPackages": ["usewebmcp"],
+				"polyfillPackages": [
+					"usewebmcp"
+				],
 				"keywordMention": true
 			},
 			"apiSurface": {

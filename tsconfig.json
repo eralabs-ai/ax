@@ -1,7 +1,9 @@
 {
 	"compilerOptions": {
 		"target": "ES2022",
-		"lib": ["ES2022"],
+		"lib": [
+			"ES2022"
+		],
 		"module": "ESNext",
 		"moduleResolution": "bundler",
 		"strict": true,
@@ -11,8 +13,15 @@
 		"resolveJsonModule": true,
 		"isolatedModules": true,
 		"noEmit": true,
-		"types": ["node"]
+		"types": [
+			"node"
+		]
 	},
-	"include": ["src"],
-	"exclude": ["node_modules", "dist"]
+	"include": [
+		"src"
+	],
+	"exclude": [
+		"node_modules",
+		"dist"
+	]
 }
