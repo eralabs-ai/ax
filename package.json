@@ -57,7 +57,7 @@
 	"homepage": "https://ora.ai",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/eralabs-ai/ax.git"
+		"url": "git+https://github.com/ora/ax.git"
 	},
 	"keywords": [
 		"ai",
