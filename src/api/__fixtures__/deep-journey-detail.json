@@ -423,7 +423,9 @@
 				}
 			],
 			"action_sequence": "fetch,fetch+fetch,fetch,fetch,search+fetch,fetch+fetch,fetch+search,fetch+fetch,search+fetch,fetch+search,fetch+fetch",
-			"signals_observed": ["developer-portal"],
+			"signals_observed": [
+				"developer-portal"
+			],
 			"friction_outcome": "timeout",
 			"status_profile": {
 				"count_2xx": 10,
