@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" role="img" aria-labelledby="ora-mark-title">
+  <title id="ora-mark-title">ora</title>
+  <rect width="32" height="32" rx="8" fill="#F9F7F2"/>
+  <circle cx="16" cy="16" r="8.5" fill="none" stroke="#1A1A1A" stroke-width="4.5"/>
+</svg>

@@ -1,17 +1,35 @@
-# ax — the ora CLI
+<p align="center">
+  <a href="https://ora.ai"><img src="https://raw.githubusercontent.com/ora/ax/main/.github/assets/ora-mark.svg" width="72" height="72" alt="ora" /></a>
+</p>
 
-Score any site's agent readiness — and watch real AI agents navigate it. Powered by [ora](https://ora.ai)'s hosted APIs.
+<h1 align="center">ax</h1>
+
+<p align="center">Score any site's agent readiness from your terminal or CI — and watch real AI agents navigate it.<br />The open-source CLI for <a href="https://ora.ai">ora</a>.</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/ax"><img src="https://img.shields.io/npm/v/ax?label=npm&color=14B8A6" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/ax"><img src="https://img.shields.io/npm/dm/ax?color=14B8A6" alt="npm downloads" /></a>
+  <a href="https://github.com/ora/ax/actions/workflows/ci.yml"><img src="https://github.com/ora/ax/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
+  <a href="https://www.npmjs.com/package/ax#provenance"><img src="https://img.shields.io/badge/npm-provenance-14B8A6" alt="npm provenance" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-1A1A1A" alt="MIT license" /></a>
+</p>
 
 ```
 npx ax audit https://stripe.com
 ```
+
+**No account, no API key.** Everything below works out of the box — the one exception is [`journey`](#for-ora-partners), which drives ora's partner platform.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ora/ax/main/.github/assets/demo.gif" width="880" alt="ax audit https://stripe.com — live progress, then the layered report and ora's ranked top fixes" />
+</p>
 
 Five commands:
 
 - **`audit <url>`** — run ora's hosted agent-readiness audit against a site: live progress, then a layered report of what passed, what's broken, and ora's ranked list of the highest-impact fixes (or `--json` for the raw contract payload). No account or API key needed. Gate CI with `--min-score`.
 - **`webmcp-audit <url>`** — audit a page's `document.modelContext` tools in a real browser. Works on any http(s) URL, localhost included, so you can check a surface before you publish it. Measures the page the way ora's capture worker does and has ora score it; nothing is stored, published, or ranked.
 - **`deep-journey <url>`** — run a real AI agent at a site on one of ora's curated tasks through the public journey API: no key, no workspace. A partner API key unlocks free-text tasks (`--task`) and a larger allowance.
-- **`journey "<intent>"`** — send a real AI agent (claude-code, codex, …) at a site and watch its navigation live as a boxed node-graph, then get the scored insight, tokens, and cost. Requires an `ORA_API_KEY`.
+- **`journey "<intent>"`** — send a real AI agent (claude-code, codex, …) at a site and watch its navigation live as a boxed node-graph, then get the scored insight, tokens, and cost. Partner-only: needs an `ORA_API_KEY` (see [For ora partners](#for-ora-partners)).
 - **`skill [name]`** — list, print, or install ora's agent skills, digest-verified from the public registry.
 
 ## audit
@@ -229,7 +247,41 @@ ax skill --json                         # the raw registry index
 
 Skills come from ora's public registry (`https://ora.ai/.well-known/agent-skills/`) and every byte is verified against the registry's sha256 digest before it is printed or installed. Skill content is never bundled into this package. `--dir <path>` overrides the install directory, and `--json` prints the registry index as JSON instead of the formatted list.
 
-## journey
+## Library use
+
+The same contract-typed client the CLI uses is importable:
+
+```ts
+import { audit } from "ax";
+
+const { result } = await audit("stripe.com");
+console.log(result.score, result.grade, result.topFixes);
+```
+
+`result` is the raw versioned audit payload (`AuditScanResult` / `AuditScoreResult`, generated from ora's OpenAPI spec). `fetchSkill` / `fetchSkillIndex` expose the digest-verified skill registry.
+
+The public journey client is exported too — the same no-key path as `ax deep-journey`:
+
+```ts
+import { deepJourney, fetchJourneyAgents } from "ax";
+
+const { agents, defaultId } = await fetchJourneyAgents();
+const agent = agents.find((a) => a.id === defaultId)!;
+const { detail } = await deepJourney("stripe.com", {
+	intentId: "pricing",
+	harness: agent.harness,
+	model: agent.model,
+});
+console.log(detail.verdict, detail.step_count, detail.result?.insight.summary);
+```
+
+`detail` is the contract's `JourneyRunDetail`; `fetchJourneyIntents` lists the curated intents. The same public caps apply — a capped target resolves with the most recent stored run (`cached: true` on the outcome), not an error.
+
+## For ora partners
+
+Everything above runs without an account. The commands and flags in this section are for teams working with ora directly: they need an ora-issued API key, and there is no self-serve signup — keys are issued by ora (contact [hello@ora.ai](mailto:hello@ora.ai)). A partner key also lifts the anonymous rate limits on `audit`, `webmcp-audit`, and `deep-journey` via their `--api-key` flags.
+
+### journey
 
 ```
 ax journey "<intent>" [--domain d] [--harness h] [--model m] [--json]
@@ -279,7 +331,7 @@ Note: run-to-run variance is real — agents sometimes answer from search snippe
 
 Journey exit codes: `0` run outcome `success` · `1` non-success outcome · `2` any error.
 
-### Setup
+#### Setup
 
 `journey` needs an ora platform API key (scopes `runs:read` + `runs:write`):
 
@@ -289,36 +341,6 @@ ax journey "Find the pricing page" --domain example.com
 ```
 
 For local development, copy `.env.example` to `.env` — the CLI reads a `.env` in the working directory on startup (exported variables win over the file).
-
-## Library use
-
-The same contract-typed client the CLI uses is importable:
-
-```ts
-import { audit } from "ax";
-
-const { result } = await audit("stripe.com");
-console.log(result.score, result.grade, result.topFixes);
-```
-
-`result` is the raw versioned audit payload (`AuditScanResult` / `AuditScoreResult`, generated from ora's OpenAPI spec). `fetchSkill` / `fetchSkillIndex` expose the digest-verified skill registry.
-
-The public journey client is exported too — the same no-key path as `ax deep-journey`:
-
-```ts
-import { deepJourney, fetchJourneyAgents } from "ax";
-
-const { agents, defaultId } = await fetchJourneyAgents();
-const agent = agents.find((a) => a.id === defaultId)!;
-const { detail } = await deepJourney("stripe.com", {
-	intentId: "pricing",
-	harness: agent.harness,
-	model: agent.model,
-});
-console.log(detail.verdict, detail.step_count, detail.result?.insight.summary);
-```
-
-`detail` is the contract's `JourneyRunDetail`; `fetchJourneyIntents` lists the curated intents. The same public caps apply — a capped target resolves with the most recent stored run (`cached: true` on the outcome), not an error.
 
 ## Environment variables
 
@@ -390,7 +412,7 @@ The webmcp mock replays the checked-in real ingest fixture, and takes a failure 
 argument — `shim`, `rate`, `scoring` or `stream` — so every error branch is reachable without the
 live endpoint.
 
-To exercise the published-package experience locally: `npm pack`, then `npx ./ora-ai-ax-<version>.tgz audit https://example.com`, or `pnpm link --global` and use `ax` directly.
+To exercise the published-package experience locally: `npm pack`, then `npx ./ax-<version>.tgz audit https://example.com`, or `pnpm link --global` and use `ax` directly.
 
 ## Releasing
 
