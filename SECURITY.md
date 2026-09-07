@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report vulnerabilities privately via GitHub's
-[private vulnerability reporting](https://github.com/eralabs-ai/ax/security/advisories/new)
+[private vulnerability reporting](https://github.com/ora/ax/security/advisories/new)
 ("Report a vulnerability" under the repo's Security tab).
 
 Do **not** open a public issue for a security problem.
