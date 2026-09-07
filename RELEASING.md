@@ -108,10 +108,13 @@ at least one `feat:` or `fix:` commit landed since the last tag. Check the
 
 **The release PR merged but publish failed.** The tag and GitHub Release exist;
 npm does not have the version yet. Fix the cause, then **Actions → Release →
-Run workflow** with `dry_run` unchecked. The `publish` job reads the version
-from `main`, confirms the tag exists, sees the version is not on npm, and
-publishes. If it *is* already on npm the job logs a notice and exits green:
-re-running is always safe.
+Run workflow**, pick the tag `vX.Y.Z` under *Use workflow from* (not `main`,
+which may have moved on since the release commit), and leave `dry_run`
+unchecked. The `publish` job reads the version from `package.json`, confirms
+that HEAD is the commit the tag points at, sees the version is not on npm, and
+publishes. Dispatching from any other commit fails preflight, so the version
+on npm always matches the tag. If it *is* already on npm the job logs a notice
+and exits green: re-running is always safe.
 
 **Publish succeeded but the workflow reported failure.** Re-run it; the
 preflight finds the version on npm and skips. Nothing to fix by hand.

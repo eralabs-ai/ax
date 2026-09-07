@@ -23,7 +23,8 @@ on:
     branches: [main]
   # Manual dispatch is for the publish half only: rehearse it (dry_run), or
   # retry a publish that failed after the release PR already merged and the
-  # tag already exists. It never bumps or tags anything.
+  # tag already exists (dispatch from that tag, not from main). It never bumps
+  # or tags anything.
   workflow_dispatch:
     inputs:
       dry_run:
@@ -133,7 +134,7 @@ jobs:
 
       # Idempotent by design: a retry after a publish that already succeeded is
       # a no-op, not a failure. The tag check catches a manual dispatch from a
-      # commit that was never released.
+      # commit that was never released, or from one that is not the release.
       - name: Preflight — tag and registry check
         id: preflight
         env:
@@ -142,9 +143,20 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          if [ "$DRY_RUN" != "true" ] && ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-            echo "::error::Tag $TAG does not exist — merge the release PR first; publish never tags"
-            exit 1
+          if [ "$DRY_RUN" != "true" ]; then
+            if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+              echo "::error::Tag $TAG does not exist — merge the release PR first; publish never tags"
+              exit 1
+            fi
+            # The tag existing is not enough: main may have moved on since the
+            # release commit (a retry after a failed publish, or a queued run
+            # that was superseded). Only the tagged commit may ship as $TAG.
+            tagged=$(git rev-parse "refs/tags/$TAG^{commit}")
+            head=$(git rev-parse HEAD)
+            if [ "$tagged" != "$head" ]; then
+              echo "::error::HEAD $head is not the commit tagged $TAG ($tagged) — re-run the workflow from the tag $TAG, not from a branch"
+              exit 1
+            fi
           fi
           if npm view "$PKG@$VERSION" version >/dev/null 2>&1; then
             echo "::notice::$PKG@$VERSION is already on npm — nothing to publish"
