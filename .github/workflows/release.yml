@@ -1,24 +1,34 @@
 name: Release
 
-# Publishing is a deliberate act: manual dispatch only, from main only.
+# Two halves, both automatic, nothing to dispatch by hand:
+#
+#   1. release-please (runs on every push to main). Reads conventional commits
+#      since the last tag, and opens or updates a single "chore(main): release
+#      X.Y.Z" PR that bumps package.json and CHANGELOG.md. Merging that PR is the
+#      release decision. On the push that merges it, release-please tags the
+#      commit and creates the GitHub Release.
+#
+#   2. publish (only when that push produced a release). Re-runs the full gate,
+#      builds, verifies the tarball and publishes to npm with provenance via
+#      OIDC Trusted Publishing.
+#
+# No loop: publish never commits anything, and release-please only commits via
+# its own PR. Every push to main therefore runs at most one release-please
+# check and zero or one publish.
+#
+# The filename is load-bearing: the npm trusted publisher for `ax` is bound to
+# `release.yml`. Rename it and publishes are rejected until npmjs.com is updated.
 on:
+  push:
+    branches: [main]
+  # Manual dispatch is for the publish half only: rehearse it (dry_run), or
+  # retry a publish that failed after the release PR already merged and the
+  # tag already exists (dispatch from that tag, not from main). It never bumps
+  # or tags anything.
   workflow_dispatch:
     inputs:
-      version_bump:
-        description: "Semver bump to apply before publishing"
-        required: true
-        type: choice
-        default: patch
-        options:
-          - patch
-          - minor
-          - major
-          # Publishes package.json's current version untouched. Needed for the
-          # very first release (so 0.1.0 ships as 0.1.0), and to retry a release
-          # that died after the bump commit landed.
-          - none
       dry_run:
-        description: "Rehearse only — build and validate, publish and push nothing"
+        description: "Rehearse the publish — build and validate, publish nothing"
         required: false
         type: boolean
         default: false
@@ -33,32 +43,59 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Release
+  release-please:
+    name: Release PR / tag
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
-      contents: write # push the tag, create the GitHub Release
+      contents: write # create the tag and GitHub Release
+      pull-requests: write # open and update the release PR
+    outputs:
+      release_created: ${{ steps.rp.outputs.release_created }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
+      version: ${{ steps.rp.outputs.version }}
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: rp
+        with:
+          # PRs opened with the built-in GITHUB_TOKEN never trigger
+          # `pull_request` workflows, so the release PR would sit with its
+          # required checks stuck at "expected" until a human closed and
+          # reopened it. A fine-grained PAT (contents + pull-requests: write on
+          # this repo) makes the PR run checks like any other. Falls back to the
+          # built-in token when the secret is absent — see RELEASING.md.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    name: Publish to npm
+    needs: release-please
+    # Runs when release-please just cut a release, or on manual dispatch (which
+    # skips release-please entirely — `needs` then reports it as skipped, hence
+    # the `!cancelled()` guard instead of the implicit success() check).
+    if: >-
+      !cancelled() && (
+        github.event_name == 'workflow_dispatch' ||
+        needs.release-please.outputs.release_created == 'true'
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
       id-token: write # OIDC token for npm provenance attestation
-      pull-requests: write # open the version-bump PR (main is protected — no direct push)
     env:
       # setup-node writes an .npmrc referencing ${NODE_AUTH_TOKEN}, so every npm and
       # pnpm call warns until something defines it. Publishing itself is tokenless
       # (OIDC Trusted Publishing); the empty default only silences a warning that
       # otherwise buries real errors in the log.
       NODE_AUTH_TOKEN: ""
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
     steps:
-      - name: Guard — releases ship from main only
-        if: github.ref != 'refs/heads/main'
-        run: |
-          echo "::error::Release must be dispatched from main (got ${{ github.ref }})"
-          exit 1
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Full history + tags: the preflight check needs to see existing tags.
+          # Full history + tags: the preflight check confirms the tag exists.
           fetch-depth: 0
-          # Credentials are kept (unlike CI) — this job pushes.
-          persist-credentials: true
+          persist-credentials: false
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
@@ -70,8 +107,8 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Re-run the full gate here rather than trusting a green CI run on the same
-      # SHA: dispatch can happen long after CI, and npm versions are forever.
+      # Re-run the full gate here rather than trusting the green CI run on the
+      # same SHA: npm versions are forever.
       - name: Lint
         run: pnpm lint
 
@@ -81,80 +118,80 @@ jobs:
       - name: Test
         run: pnpm test:ci
 
-      - name: Resolve release version
+      # The version is whatever main says. release-please already committed the
+      # bump; nothing here ever edits package.json.
+      - name: Resolve version
         id: version
-        env:
-          BUMP: ${{ inputs.version_bump }}
         run: |
           set -euo pipefail
-          if [ "$BUMP" = "none" ]; then
-            version=$(node -p "require('./package.json').version")
-            echo "Publishing current version unchanged: $version"
-          else
-            version=$(npm version "$BUMP" --no-git-tag-version | sed 's/^v//')
-            echo "Bumped ($BUMP) -> $version"
-          fi
+          version=$(node -p "require('./package.json').version")
           {
             echo "version=$version"
             echo "tag=v$version"
             echo "name=$(node -p "require('./package.json').name")"
           } >> "$GITHUB_OUTPUT"
+          echo "Publishing $version from $(git rev-parse --short HEAD)"
 
-      # `npm version` re-serialises package.json with npm's own formatting, which
-      # expands arrays that biome keeps inline. Without this, the release commits a
-      # file that fails `pnpm lint` — and since the gate above runs *before* the
-      # bump, the break only surfaces on the next release. Normalise, then re-run
-      # the linter over the bumped tree so it can never ship unformatted again.
-      - name: Normalise formatting after bump
-        if: inputs.version_bump != 'none'
-        run: |
-          set -euo pipefail
-          pnpm lint:fix
-          pnpm lint
-
-      # Fail before publishing rather than halfway through it.
-      - name: Preflight — tag and registry collision check
+      # Idempotent by design: a retry after a publish that already succeeded is
+      # a no-op, not a failure. The tag check catches a manual dispatch from a
+      # commit that was never released, or from one that is not the release.
+      - name: Preflight — tag and registry check
+        id: preflight
         env:
           TAG: ${{ steps.version.outputs.tag }}
           PKG: ${{ steps.version.outputs.name }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-            echo "::error::Tag $TAG already exists — pick a different bump"
-            exit 1
+          if [ "$DRY_RUN" != "true" ]; then
+            if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+              echo "::error::Tag $TAG does not exist — merge the release PR first; publish never tags"
+              exit 1
+            fi
+            # The tag existing is not enough: main may have moved on since the
+            # release commit (a retry after a failed publish, or a queued run
+            # that was superseded). Only the tagged commit may ship as $TAG.
+            tagged=$(git rev-parse "refs/tags/$TAG^{commit}")
+            head=$(git rev-parse HEAD)
+            if [ "$tagged" != "$head" ]; then
+              echo "::error::HEAD $head is not the commit tagged $TAG ($tagged) — re-run the workflow from the tag $TAG, not from a branch"
+              exit 1
+            fi
           fi
           if npm view "$PKG@$VERSION" version >/dev/null 2>&1; then
-            echo "::error::$PKG@$VERSION is already on npm — versions cannot be reused"
-            exit 1
+            echo "::notice::$PKG@$VERSION is already on npm — nothing to publish"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "Clear to publish $PKG@$VERSION as $TAG"
 
-      # Strictly after the bump: tsup inlines package.json, so building earlier
-      # would ship a binary that reports the previous version.
       - name: Build
+        if: steps.preflight.outputs.skip != 'true'
         run: pnpm build
 
       - name: Smoke test bundled CLI
+        if: steps.preflight.outputs.skip != 'true'
         run: pnpm smoke
 
       # Catches publishing an unbuilt or truncated bundle — npm would accept it
       # silently and break every `npx ax`. Last chance while the version
       # is still free; once published it can never be reused.
       - name: Verify publishable tarball
+        if: steps.preflight.outputs.skip != 'true'
         run: pnpm verify:pack
 
       # OIDC Trusted Publishing (configured on npmjs.com for this repo +
       # workflow) needs npm >= 11.5.1 for the token exchange; Node 22 bundles
       # npm 10, which would silently skip OIDC and fail as unauthenticated.
       - name: Upgrade npm for OIDC Trusted Publishing
+        if: steps.preflight.outputs.skip != 'true'
         run: |
           npm install -g npm@11
           npm --version
 
       - name: Publish to npm
-        env:
-          DRY_RUN: ${{ inputs.dry_run }}
+        if: steps.preflight.outputs.skip != 'true'
         run: |
           set -euo pipefail
           if [ "$DRY_RUN" = "true" ]; then
@@ -164,99 +201,27 @@ jobs:
             npm publish --access public --provenance
           fi
 
-      # Tag and land the bump only after npm accepted the publish. npm versions
-      # are immutable and effectively unrecoverable; a tag and a branch cost
-      # nothing to discard if anything here fails.
-      #
-      # This never pushes to main. main is protected: a fresh commit pushed
-      # straight to it arrives with no passing status checks, and one required
-      # check ("Conventional commit title") only ever runs on pull_request — so a
-      # direct push is rejected by construction and the release deadlocks. Instead
-      # we tag the built commit (tags carry no protection rule) and land the
-      # package.json bump the same way every other change lands: a branch + PR.
-      - name: Tag the release and open the version-bump PR
-        if: ${{ !inputs.dry_run }}
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          # main's HEAD, unmodified: the exact commit the published artifact was
-          # built from. The bump lives only in the working tree here (npm version
-          # ran --no-git-tag-version and nothing has committed it yet), so HEAD is
-          # still main. Tag THIS, not the bump commit — the repo squash-merges, so
-          # a bump-commit SHA is rewritten on merge and its tag would be orphaned.
-          MAIN_SHA=$(git rev-parse HEAD)
-          git tag -a "$TAG" -m "Release $TAG" "$MAIN_SHA"
-          git push origin "$TAG"
-
-          # `none` leaves the tree untouched — the published version already lives
-          # in package.json on main, so there is nothing to land.
-          if git diff --quiet HEAD; then
-            echo "No tree changes (bump=none); tag pushed, nothing to land on main."
-            exit 0
-          fi
-
-          # The bump plus any formatting the normalise step applied, on a branch a
-          # human merges. Staging everything tracked keeps the commit from ever
-          # being a partial snapshot of what was just published (dist/ and
-          # coverage/ stay out via .gitignore).
-          BRANCH="chore/release-$TAG"
-          git checkout -b "$BRANCH"
-          git add -A
-          git commit -m "chore(release): $TAG"
-          echo "Committed:"
-          git show --stat --oneline HEAD | tail -n +2
-          git push origin "$BRANCH"
-
-          # Opening a PR with the built-in token needs the repo setting "Allow
-          # GitHub Actions to create and approve pull requests" (Settings →
-          # Actions → General); without it this call is refused outright. And a
-          # PR opened by that token never fires pull_request events, so the
-          # required checks (ci, Conventional commit title) will not run on it
-          # until a human closes and reopens it — the reopen fires them as that
-          # human. The body tells the merger exactly that.
-          gh pr create --base main --head "$BRANCH" \
-            --title "chore(release): $TAG" \
-            --body "$(cat <<EOF
-          Records the \`$TAG\` release already published to npm and tagged at \`$MAIN_SHA\`. Merging updates \`package.json\` on main — bump only, safe to squash-merge.
-
-          **Checks will not start on their own.** This PR was opened by the release workflow with the built-in Actions token, and PRs opened that way never trigger \`pull_request\` workflows. **Close and reopen this PR** to run the required checks, then merge.
-          EOF
-          )"
-
-      - name: Create GitHub Release
-        if: ${{ !inputs.dry_run }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-        run: gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag
-
       - name: Summary
         if: always()
         env:
           PKG: ${{ steps.version.outputs.name }}
           VERSION: ${{ steps.version.outputs.version }}
           TAG: ${{ steps.version.outputs.tag }}
-          BUMP: ${{ inputs.version_bump }}
-          DRY_RUN: ${{ inputs.dry_run }}
+          SKIPPED: ${{ steps.preflight.outputs.skip }}
         run: |
           {
-            echo "## Release ${TAG:-(not reached)}"
+            echo "## Publish ${TAG:-(not reached)}"
             echo ""
             echo "| | |"
             echo "|---|---|"
             echo "| Package | \`${PKG:-?}\` |"
             echo "| Version | \`${VERSION:-?}\` |"
-            echo "| Bump | \`$BUMP\` |"
             echo "| Dry run | \`$DRY_RUN\` |"
+            echo "| Already on npm | \`${SKIPPED:-?}\` |"
             echo "| Result | ${{ job.status }} |"
             echo ""
             if [ "$DRY_RUN" = "true" ]; then
-              echo "Rehearsal only — nothing was published, committed or tagged."
+              echo "Rehearsal only — nothing was published."
             else
               echo "https://www.npmjs.com/package/${PKG:-}/v/${VERSION:-}"
             fi

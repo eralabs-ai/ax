@@ -394,9 +394,10 @@ To exercise the published-package experience locally: `npm pack`, then `npx ./or
 
 ## Releasing
 
-Publishing runs from GitHub Actions only — **Actions → Release → Run workflow**,
-pick a `patch`/`minor`/`major` bump. See [RELEASING.md](RELEASING.md) for the
-runbook, required setup, and failure recovery.
+Publishing runs from GitHub Actions only. Every push to `main` updates a
+release-please PR; merging it tags, creates the GitHub Release, and publishes
+to npm with provenance. See [RELEASING.md](RELEASING.md) for the runbook,
+required setup, and failure recovery.
 
 ## License
 
