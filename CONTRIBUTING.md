@@ -4,7 +4,7 @@ Thanks for helping improve `ax`, the Ora CLI.
 
 ## Setup
 
-Requires Node >= 20.12 and [pnpm](https://pnpm.io) (version pinned in the
+Requires Node >= 22.4 and [pnpm](https://pnpm.io) (version pinned in the
 `packageManager` field of `package.json` — `corepack enable` picks it up).
 
 ```sh
@@ -22,7 +22,7 @@ pnpm smoke         # run the bundled binary the way a user would
 pnpm verify:pack   # prove the npm tarball would be publishable
 ```
 
-CI runs lint, typecheck, tests on Node 20/22/24, build, smoke, and the pack
+CI runs lint, typecheck, tests on Node 22/24, build, smoke, and the pack
 check on every PR. All of it must be green before merge.
 
 ## Commit messages and PR titles

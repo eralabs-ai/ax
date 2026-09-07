@@ -54,7 +54,12 @@
 		"onlyBuiltDependencies": ["@biomejs/biome", "esbuild"]
 	},
 	"license": "MIT",
-	"homepage": "https://ora.ai",
+	"author": {
+		"name": "Era AI Labs",
+		"url": "https://ora.ai"
+	},
+	"homepage": "https://ora.ai/docs#cli",
+	"bugs": "https://github.com/ora/ax/issues",
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/ora/ax.git"
